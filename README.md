@@ -20,3 +20,15 @@ Mouse fallback: drag to rotate, scroll to explode, drag a part to move it, shift
 STEP/STP, GLB, OBJ, STL. Explosion needs separate bodies, so an STL loads as a single part.
 
 The weather, calendar and to-do panels show sample data.
+
+## Voice
+
+Click **Enable voice** (or press V) once. The assistant, Holo, speaks in a browser voice and listens through your microphone (Chrome or Edge). Say "Holo" first, then a command:
+
+- explode, assemble, reset the view, rotate left / right / up / down
+- show / close the weather, calendar, to-do, assembly or system panel, or all panels
+- what's the weather, what's on my calendar, read my tasks, complete task three
+- isolate planet gear two, select the sun gear, return the part
+- how many parts, system status, what time is it, help, stop
+
+You can also type a command in the box at the bottom. Speech recognition in Chrome is processed by Google's online service. Spoken replies use your browser's installed voices, so the voice differs by device.

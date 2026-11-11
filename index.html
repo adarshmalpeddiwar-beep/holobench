@@ -131,6 +131,16 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .status .meter i{position:absolute;left:0;top:0;bottom:0;background:var(--amber);box-shadow:0 0 10px var(--amber);width:0}
 .legend{font-family:var(--mono);font-size:11.5px;color:var(--cyan-dim);line-height:1.5;text-align:right}
 .legend b{color:var(--text);font-weight:400}
+#voice{position:absolute;left:50%;bottom:96px;transform:translateX(-50%);width:min(560px,34vw);min-width:300px;background:rgba(2,24,34,.62);border:1px solid rgba(53,224,255,.4);padding:8px 14px;opacity:0;transition:opacity .4s;pointer-events:none;text-align:center}
+#voice.show{opacity:1}
+#voice .you{font-family:var(--mono);font-size:12px;color:var(--cyan-dim);min-height:16px;letter-spacing:.04em}
+#voice .ai{font-size:18px;color:var(--text);line-height:1.25;margin-top:2px}
+#voice .ai b{font-family:var(--display);font-weight:500;font-size:11px;letter-spacing:.22em;color:var(--amber);margin-right:8px}
+.btn.on{border-color:var(--amber);color:#fff;box-shadow:0 0 16px rgba(255,179,71,.5)}
+.btn.listening::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--alert);margin-right:8px;animation:pulse 1.1s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.25}}
+#cmd{font-family:var(--mono);font-size:13px;color:var(--text);background:var(--glass);border:1px solid rgba(53,224,255,.4);padding:8px 10px;width:210px}
+#cmd::placeholder{color:var(--cyan-dim)}
 #toast{position:absolute;left:50%;top:64px;transform:translateX(-50%);max-width:min(560px,80vw);background:rgba(2,20,28,.85);border:1px solid var(--amber);color:var(--text);
   font-size:15px;padding:8px 14px;text-align:center;opacity:0;transition:opacity .3s;pointer-events:none}
 #toast.show{opacity:1}
@@ -199,7 +209,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
     <section class="widget" id="w-sys">
       <button class="head" data-tap aria-expanded="false"><span class="ico"></span><span><div class="t">SYSTEM</div><div class="s" id="sys-sum">Starting…</div></span><span class="chev">▸</span></button>
       <div class="body"><div class="in">
-        <div class="kv" style="margin-top:8px"><b>Camera</b><span id="s-cam">off</span><b>Hand tracking</b><span id="s-trk">loading</span><b>Hands in view</b><span id="s-hands">0</span><b>Frame rate</b><span id="s-fps">—</span><b>Explode</b><span id="s-exp">0 %</span></div>
+        <div class="kv" style="margin-top:8px"><b>Camera</b><span id="s-cam">off</span><b>Hand tracking</b><span id="s-trk">loading</span><b>Hands in view</b><span id="s-hands">0</span><b>Frame rate</b><span id="s-fps">—</span><b>Explode</b><span id="s-exp">0 %</span><b>Voice</b><span id="s-voice">off</span></div>
       </div></div>
     </section>
   </div>
@@ -216,6 +226,8 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
       <button class="btn" id="b-exp" data-tap>EXPLODE</button>
       <button class="btn" id="b-reset" data-tap>RESET VIEW</button>
       <button class="btn" id="b-cam" hidden>ENABLE CAMERA</button>
+      <button class="btn warm" id="b-voice">ENABLE VOICE</button>
+      <input id="cmd" type="text" placeholder="or type: holo explode" autocomplete="off" aria-label="Type a command">
       <input type="file" id="file" accept=".glb,.gltf,.obj,.stl,.step,.stp" hidden>
     </div>
     <div class="status">
@@ -225,9 +237,11 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
     <div class="legend">
       <b>Two hands apart / together</b> explode / close · <b>two hands turn</b> rotate assembly<br>
       <b>Pinch</b> pick and move a part · <b>one cupped hand turns</b> rotate that part<br>
-      <b>Pinch inside a panel, button or link</b> click it
+      <b>Pinch inside a panel, button or link</b> click it<br>
+      <b>Enable voice</b> (mouse click or press V), then say <b>"Holo, explode"</b>
     </div>
   </div>
+  <div id="voice" aria-live="polite"><div class="you" id="v-you"></div><div class="ai" id="v-ai"></div></div>
   <div id="toast" role="status"></div>
   <div id="drop">DROP CAD FILE</div>
 </div>
@@ -817,7 +831,7 @@ function frame(now){
   }
 
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.clearRect(0, 0, W, H);
-  drawRings(now / 1000, cx, spanS); drawLabels(cx); drawCursors(now);
+  drawRings(now / 1000, cx, spanS); drawLabels(cx); drawCursors(now); drawVoice(now, cx);
 
   if (now - uiT > 150){
     uiT = now;
@@ -828,6 +842,185 @@ function frame(now){
   }
   requestAnimationFrame(frame);
 }
+
+/* ================= voice: commands in, spoken replies out ================= */
+const ASSISTANT = 'Holo';                       // display name; the wake word regex below matches common mishearings
+const WAKE = /\b(holo|halo|hollow|hola|olo)\b/;
+const EVENTS = [['10:30', 'Design review, housing revision C'], ['14:00', 'Vendor call about CNC quotes'], ['17:30', 'Prototype test run']];
+/*PARSER-START*/
+const NUMW = { zero: 0, one: 1, two: 2, to: 2, too: 2, three: 3, four: 4, for: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+function normSpeech(t){ return t.toLowerCase().replace(/[.,!?']/g, ' ').replace(/\s+/g, ' ').trim(); }
+function numTokens(t){ return t.split(' ').map(w => (w in NUMW && /\b(gear|bolt|task|item|number|part)\b/.test(t)) ? String(NUMW[w]) : w).join(' '); }
+function matchPart(text, names){
+  const tx = numTokens(normSpeech(text)), tt = tx.split(' '), digits = tt.filter(w => /^\d+$/.test(w));
+  const toks = names.map(n => normSpeech(n).split(' '));
+  const freq = {}; toks.forEach(a => new Set(a.filter(w => !/^\d+$/.test(w))).forEach(w => freq[w] = (freq[w] || 0) + 1));
+  let best = -1, bs = 0;
+  toks.forEach((a, i) => {
+    const words = a.filter(w => !/^\d+$/.test(w)), dig = a.filter(w => /^\d+$/.test(w));
+    const hit = words.filter(w => tt.includes(w) || tt.includes(w + 's'));
+    if (!hit.length) return;
+    if (dig.length && digits.length && !digits.includes(dig[0])) return;
+    let sc = hit.length / words.length;
+    if (sc < 1 && !(hit.length === 1 && freq[hit[0]] === 1)) return;          // partial match only for a word unique to one part
+    if (dig.length && digits.includes(dig[0])) sc += 0.5;
+    if (sc > bs){ bs = sc; best = i; }
+  });
+  return best;
+}
+function parseIntent(raw, names){
+  const t = normSpeech(raw), has = re => re.test(t);
+  const panel = (t.match(/\b(weather|calendar|schedule|to do|todo|tasks?|assembly|system|panels?)\b/) || [])[1];
+  const pmap = { weather: 'weather', calendar: 'calendar', schedule: 'calendar', 'to do': 'todo', todo: 'todo', task: 'todo', tasks: 'todo', assembly: 'assembly', system: 'system', panel: 'all', panels: 'all' };
+  if (has(/\b(stop|quiet|silence|shut up|enough)\b/)) return { k: 'stop' };
+  if (has(/\b(what can you do|help|commands|what can i say)\b/)) return { k: 'help' };
+  if (has(/\b(return|restore|bring back|put back)\b.*\b(part|bay)\b|\b(empty|clear) the bay\b/)) return { k: 'unbay' };
+  if (has(/\b(close|hide|dismiss|collapse)\b/) && panel) return { k: 'panel', open: false, which: pmap[panel] };
+  if (has(/\b(isolate|inspect|send|move|put|bay)\b/) && !has(/\b(the )?(weather|calendar)\b/)){
+    const i = matchPart(t, names); if (i >= 0) return { k: 'isolate', i };
+    if (has(/\b(isolate|inspect)\b/)) return { k: 'isolate', i: -1 };
+  }
+  if (has(/\b(select|highlight|pick|choose)\b/)){ const i = matchPart(t, names); if (i >= 0) return { k: 'select', i }; }
+  if (has(/\b(complete|finish|check off|tick|done with)\b/) && has(/\b(task|item|number|one|two|three|four|five|\d)\b/)){
+    const n = numTokens(t).split(' ').find(w => /^\d+$/.test(w)); if (n) return { k: 'task', n: +n };
+  }
+  if (has(/\b(what s|what is|whats|how s|tell me)\b.*\b(weather|temperature|forecast)\b|\b(weather|temperature|forecast)\b.*\b(like|today|now)\b/)) return { k: 'ask', what: 'weather' };
+  if (has(/\b(what s|what is|whats|read|tell me)\b.*\b(calendar|schedule|meetings?|events?|agenda)\b/)) return { k: 'ask', what: 'calendar' };
+  if (has(/\b(what s|what is|whats|read|tell me|list)\b.*\b(to do|todo|tasks?)\b/)) return { k: 'ask', what: 'todo' };
+  if (has(/\b(open|show|display|bring up|pull up)\b/) && panel) return { k: 'panel', open: true, which: pmap[panel] };
+  if (has(/\b(explode|take it apart|take apart|break it down|blow it up)\b/)) return { k: 'explode' };
+  if (has(/\b(assemble|reassemble|put it back together|snap back|collapse|bring it together|close it up)\b/)) return { k: 'assemble' };
+  if (has(/\b(reset|home|default)\b.*\b(view|camera|position)\b|\breset\b/)) return { k: 'reset' };
+  const rot = t.match(/\b(rotate|turn|spin|swing)\b.*\b(left|right|up|down)\b/); if (rot) return { k: 'rotate', dir: rot[2] };
+  if (has(/\b(load|upload|open|import)\b.*\b(model|cad|file|assembly)\b/)) return { k: 'load' };
+  if (has(/\b(how many parts|part count|number of parts)\b/)) return { k: 'ask', what: 'parts' };
+  if (has(/\b(status|report|system check|diagnostics)\b/)) return { k: 'ask', what: 'status' };
+  if (has(/\bwhat time\b|\bthe time\b/)) return { k: 'ask', what: 'time' };
+  if (has(/\b(what s|what is|whats)\b.*\b(date|day)\b|\btoday s date\b/)) return { k: 'ask', what: 'date' };
+  if (has(/\b(thanks|thank you|cheers)\b/)) return { k: 'thanks' };
+  if (has(/\b(hello|hi|hey|good morning|good evening|good afternoon)\b/)) return { k: 'greet' };
+  return { k: 'unknown' };
+}
+/*PARSER-END*/
+const WNAME = { weather: 'w-weather', calendar: 'w-cal', todo: 'w-todo', assembly: 'w-model', system: 'w-sys' };
+let voiceOn = false, recWanted = false, rec = null, listening = false, speaking = false, awakeUntil = 0, voiceCapT = 0;
+const SRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+function showVoice(you, ai){
+  const v = $('voice'); if (you !== undefined) $('v-you').textContent = you;
+  if (ai !== undefined) $('v-ai').innerHTML = ai ? '<b>' + ASSISTANT.toUpperCase() + '</b>' : '';
+  if (ai) { const sp = document.createElement('span'); sp.textContent = ai; $('v-ai').appendChild(sp); }
+  v.classList.add('show'); clearTimeout(voiceCapT); voiceCapT = setTimeout(() => v.classList.remove('show'), 7000);
+}
+function pickVoice(){
+  const vs = speechSynthesis.getVoices(); if (!vs.length) return null;
+  const pref = [/google uk english male/i, /daniel/i, /microsoft (george|ryan|thomas)/i, /arthur/i, /oliver/i, /\bmale\b/i];
+  for (const re of pref){ const v = vs.find(v => re.test(v.name) && /^en/i.test(v.lang)); if (v) return v; }
+  return vs.find(v => /en-GB/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || vs[0];
+}
+function say(text){
+  showVoice(undefined, text);
+  if (!voiceOn || !('speechSynthesis' in window)) return;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text), v = pickVoice();
+    if (v){ u.voice = v; u.lang = v.lang; } else u.lang = 'en-GB';
+    u.rate = 0.96; u.pitch = 0.8; u.volume = 1;
+    u.onstart = () => { speaking = true; stopRec(); };
+    u.onend = u.onerror = () => { speaking = false; if (recWanted) setTimeout(startRec, 350); };
+    speechSynthesis.speak(u);
+  } catch (e){}
+}
+function startRec(){
+  if (!SRec || !recWanted || speaking || listening) return;
+  try {
+    rec = new SRec(); rec.lang = 'en-IN'; rec.continuous = true; rec.interimResults = true;
+    rec.onstart = () => { listening = true; $('b-voice').classList.add('listening'); $('s-voice').textContent = 'listening'; };
+    rec.onresult = e => {
+      for (let i = e.resultIndex; i < e.results.length; i++){
+        const r = e.results[i], tx = r[0].transcript.trim();
+        if (r.isFinal) heard(tx); else showVoice(tx + ' …');
+      }
+    };
+    rec.onerror = ev => {
+      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed'){ recWanted = false; setVoiceUi(false); toast('Microphone blocked. Allow the mic for this page, then press Enable voice again.', 7000); }
+    };
+    rec.onend = () => { listening = false; $('b-voice').classList.remove('listening'); if (recWanted && !speaking) setTimeout(startRec, 250); };
+    rec.start();
+  } catch (e){ listening = false; }
+}
+function stopRec(){ try { if (rec){ rec.onend = null; rec.abort(); } } catch (e){} listening = false; $('b-voice').classList.remove('listening'); }
+function setVoiceUi(on){ $('b-voice').classList.toggle('on', on); $('b-voice').textContent = on ? 'VOICE ON' : 'ENABLE VOICE'; $('s-voice').textContent = on ? (SRec ? 'listening' : 'speaking only') : 'off'; if (!on) $('b-voice').classList.remove('listening'); }
+function heard(text){
+  const n = normSpeech(text), now = performance.now(), m = n.match(WAKE);
+  showVoice('“' + text + '”');
+  if (m){ const cmd = n.replace(WAKE, ' ').replace(/\s+/g, ' ').trim(); awakeUntil = now + 10000; if (!cmd){ say('Yes?'); return; } runCommand(cmd); }
+  else if (now < awakeUntil) runCommand(n);
+}
+function partNames(){ return parts.map(p => p.name); }
+function timeGreeting(){ const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; }
+function runCommand(cmd){
+  awakeUntil = performance.now() + 8000;
+  const it = parseIntent(cmd, partNames());
+  switch (it.k){
+    case 'explode': explodeTarget = 1; say(parts.length > 1 ? 'Exploding the assembly.' : 'This model is a single body, so there is nothing to separate.'); break;
+    case 'assemble': explodeTarget = 0; say('Reassembling.'); break;
+    case 'reset': $('b-reset').click(); say('View reset.'); break;
+    case 'rotate': { const d = it.dir; if (d === 'left') spin.vy = -0.07; else if (d === 'right') spin.vy = 0.07; else if (d === 'up') spin.vx = -0.07; else spin.vx = 0.07; userRotated = true; say('Rotating ' + d + '.'); break; }
+    case 'panel': {
+      const ids = it.which === 'all' ? Object.values(WNAME) : [WNAME[it.which]];
+      ids.forEach(id => setWidget($(id), it.open));
+      say((it.open ? 'Opening ' : 'Closing ') + (it.which === 'all' ? 'all panels.' : 'the ' + it.which + ' panel.')); break;
+    }
+    case 'ask': {
+      if (it.what === 'weather'){ setWidget($('w-weather'), true); say('Bengaluru. Twenty four degrees and partly cloudy, humidity sixty eight percent, twenty percent chance of rain. This panel shows sample data.'); }
+      else if (it.what === 'calendar'){ setWidget($('w-cal'), true); say('You have ' + EVENTS.length + ' events. ' + EVENTS.map(e => e[1] + ' at ' + e[0]).join('. ') + '. These are sample events.'); }
+      else if (it.what === 'todo'){ setWidget($('w-todo'), true); const open = [...$('todo').children].filter(li => !li.firstChild.classList.contains('done')).map(li => li.textContent.trim());
+        say(open.length ? 'You have ' + open.length + ' open tasks. ' + open.join('. ') + '.' : 'All tasks are done.'); }
+      else if (it.what === 'parts'){ say('The assembly has ' + parts.length + ' parts and ' + Math.round(triCount).toLocaleString() + ' triangles.'); }
+      else if (it.what === 'status'){ say('Camera ' + (camOn ? 'live' : 'off') + '. Hand tracking ' + $('s-trk').textContent + '. Assembly ' + Math.round(explodeT * 100) + ' percent exploded. Running at ' + Math.round(fpsS) + ' frames per second.'); }
+      else if (it.what === 'time'){ say('It is ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + '.'); }
+      else if (it.what === 'date'){ say('Today is ' + new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' }) + '.'); }
+      break;
+    }
+    case 'isolate': {
+      if (it.i < 0){ say('Which part? Say its name, for example planet gear two.'); break; }
+      const p = parts[it.i]; if (!p || !p.visible){ say('That part is already in the bay.'); break; }
+      if (explodeT < 0.3) explodeTarget = 1; isolate(p); say('Isolating ' + p.name + ' in the part bay.'); break;
+    }
+    case 'select': { const p = parts[it.i]; if (p && p.visible){ if (explodeT < 0.3) explodeTarget = 1; select(p); say(p.name + ' selected. Turn your hand to rotate it.'); } break; }
+    case 'unbay': if (isolated){ const nm = isolated.name; restoreBay(); say(nm + ' returned to the assembly.'); } else say('The bay is empty.'); break;
+    case 'task': { const b = $('todo').children[it.n - 1]; if (b){ b.firstChild.click(); say('Task ' + it.n + ' updated.'); } else say('There is no task ' + it.n + '.'); break; }
+    case 'load': $('b-load').classList.add('hot'); setTimeout(() => $('b-load').classList.remove('hot'), 2500); say('Choosing a file needs a click. Press Load CAD model, or drop a file on the screen.'); break;
+    case 'help': say('Say Holo, then: explode, assemble, rotate left, show the weather, what is on my calendar, read my tasks, isolate planet gear two, or return the part.'); break;
+    case 'greet': say(timeGreeting() + '. How can I help?'); break;
+    case 'thanks': say('At your service.'); break;
+    case 'stop': try { speechSynthesis.cancel(); } catch (e){} speaking = false; showVoice(undefined, ''); break;
+    default: say('I did not catch a command. Say Holo help to hear what I can do.');
+  }
+}
+function toggleVoice(trusted){
+  if (voiceOn){ voiceOn = false; recWanted = false; stopRec(); try { speechSynthesis.cancel(); } catch (e){} speaking = false; setVoiceUi(false); showVoice('', 'Voice off.'); return; }
+  if (!trusted){ toast('Browsers only allow audio after a real click. Click Enable voice with the mouse once, or press V.', 6000); return; }
+  voiceOn = true; setVoiceUi(true);
+  if (SRec){ recWanted = true; } else toast('This browser has no speech recognition. Use Chrome or Edge for voice commands. Spoken replies and typed commands still work.', 8000);
+  say(timeGreeting() + '. Voice systems online. Say Holo, then a command. Say Holo help for the list.');
+  if (SRec) setTimeout(startRec, 400);
+}
+$('b-voice').addEventListener('click', e => toggleVoice(e.isTrusted));
+window.addEventListener('keydown', e => { if ((e.key === 'v' || e.key === 'V') && !e.ctrlKey && !e.metaKey && document.activeElement !== $('cmd')) toggleVoice(true); });
+$('cmd').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.value.trim()){ const v = e.target.value.trim(); e.target.value = ''; showVoice('“' + v + '”'); const n = normSpeech(v).replace(WAKE, ' ').replace(/\s+/g, ' ').trim(); if (n) runCommand(n); else say('Yes?'); } });
+if ('speechSynthesis' in window) speechSynthesis.onvoiceschanged = () => {};
+function drawVoice(now, cx){                    // pulsing halo behind the hologram while the assistant speaks
+  if (!speaking) return;
+  const cy = H / 2, t = now / 1000, R0 = Math.min(spanS, H) * 0.12;
+  ctx.shadowColor = CYAN; ctx.shadowBlur = 14; ctx.lineWidth = 3; ctx.strokeStyle = CYAN;
+  for (let i = 0; i < 64; i++){
+    const a = i / 64 * Math.PI * 2, amp = 0.5 + 0.5 * Math.sin(t * 9 + i * 1.7) * Math.sin(t * 5.3 + i * 0.6), l = 8 + amp * 46;
+    ctx.globalAlpha = 0.35 + 0.5 * amp; ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * R0, cy + Math.sin(a) * R0); ctx.lineTo(cx + Math.cos(a) * (R0 + l), cy + Math.sin(a) * (R0 + l)); ctx.stroke();
+  }
+  ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+}
+
 buildDemo();
 spanS = W;
 requestAnimationFrame(frame);
